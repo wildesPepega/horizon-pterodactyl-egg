@@ -1,0 +1,122 @@
+{
+    "_comment": "DO NOT EDIT: FILE GENERATED AUTOMATICALLY BY PTERODACTYL PANEL - PTERODACTYL.IO",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": "https://raw.githubusercontent.com/wildesPepega/horizon-pterodactyl-egg/main/egg-horizon.json"
+    },
+    "exported_at": "2026-11-22T17:17:18+00:00",
+    "name": "Horizon",
+    "author": "wildesPepega@users.noreply.github.com",
+    "description": "Horizon - a Minecraft Java Edition 26.3 server written in Rust (horizon-server): one native program, no Java. The game files must be prepared from your own copy of Minecraft with horizon-prepare and uploaded to resources/ (https://playhorizon.dev/docs/hosting).",
+    "features": [],
+    "docker_images": {
+        "Debian": "ghcr.io/ptero-eggs/yolks:debian"
+    },
+    "file_denylist": [],
+    "startup": "sh ./horizon-start.sh",
+    "config": {
+        "files": "{}",
+        "startup": "{\n    \"done\": \")! For help, type \"\n}",
+        "logs": "{}",
+        "stop": "stop"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\n# Horizon - Pterodactyl install script (runs in the installer container, server folder = /mnt/server).\n# Downloads the server build of the GitHub release named by HORIZON_VERSION, verifies its SHA-256\n# and writes horizon-start.sh. The world, server.toml and resources/ are kept on reinstall.\n# Set HORIZON_INSTALL_DIR to install somewhere else (e.g. for a local dry run).\nset -eu\nDIR=\"${HORIZON_INSTALL_DIR:-/mnt/server}\"\nREPO=horizon-rust/horizon\nASSET=horizon-server-linux-x86_64.tar.gz\nTAG=\"${HORIZON_VERSION:-nightly}\"\n[ -n \"$TAG\" ] || TAG=nightly\ndie() { echo \"[Horizon] ERROR: $*\" >&2; exit 1; }\n\nif ! command -v curl >/dev/null || ! command -v jq >/dev/null; then\n  apt-get update -qq && apt-get install -y -qq curl jq ca-certificates tar coreutils >/dev/null\nfi\n\nmkdir -p \"$DIR\"\ncd \"$DIR\"\nTMP=$(mktemp -d)\ntrap 'rm -rf \"$TMP\"' EXIT\n\necho \"[Horizon] Looking up release '$TAG' on GitHub...\"\nJSON=$(curl -fsSL -H \"Accept: application/vnd.github+json\" \\\n  \"https://api.github.com/repos/$REPO/releases/tags/$TAG\") || die \"release '$TAG' not found\"\nURL=$(printf '%s' \"$JSON\" | jq -r --arg a \"$ASSET\" '.assets[] | select(.name==$a) | .browser_download_url')\nDIGEST=$(printf '%s' \"$JSON\" | jq -r --arg a \"$ASSET\" '.assets[] | select(.name==$a) | .digest // empty' | sed 's/^sha256://')\n[ -n \"$URL\" ] && [ \"$URL\" != null ] || die \"release '$TAG' has no $ASSET\"\n\necho \"[Horizon] Downloading $ASSET...\"\ncurl -fL --progress-bar -o \"$TMP/$ASSET\" \"$URL\"\nif [ -n \"$DIGEST\" ]; then\n  GOT=$(sha256sum \"$TMP/$ASSET\" | cut -d' ' -f1)\n  [ \"$GOT\" = \"$DIGEST\" ] || die \"SHA-256 mismatch (got $GOT, expected $DIGEST)\"\n  echo \"[Horizon] SHA-256 OK.\"\nelse\n  echo \"[Horizon] Warning: the release publishes no SHA-256, skipping verification.\"\nfi\n\nmkdir -p \"$TMP/x\"\ntar -xzf \"$TMP/$ASSET\" -C \"$TMP/x\" --strip-components=1\n[ -x \"$TMP/x/horizon-server\" ] || die \"$ASSET contains no horizon-server\"\n\n# Replace only the program, keep the server's own data.\nrm -rf \"$DIR/horizon\"\nmv \"$TMP/x\" \"$DIR/horizon\"\nmkdir -p \"$DIR/resources\"\nprintf '%s\\n' \"$TAG\" > \"$DIR/horizon/.installed-tag\"\n\ncat > \"$DIR/horizon-start.sh\" <<'START'\n#!/bin/sh\n# Starts Horizon inside the Pterodactyl container. Program: ./horizon/, game files: ./resources/.\n# The first start creates server.toml with \"horizon-server init\" from the panel variables;\n# after that the port follows the panel allocation (SERVER_PORT) on every start.\ncd \"$(dirname \"$0\")\" || exit 1\nPORT=\"${SERVER_PORT:-25565}\"\nBIN=./horizon/horizon-server\n\nif [ ! -x \"$BIN\" ]; then\n  echo \"[Horizon] ./horizon/horizon-server is missing - reinstall the server from the panel.\"\n  exit 1\nfi\n\nif [ -z \"$(ls -A resources 2>/dev/null)\" ] && [ -z \"${HORIZON_RESOURCES:-}\" ]; then\n  echo \"[Horizon] The resources/ folder is empty.\"\n  echo \"[Horizon] Prepare the Minecraft 26.3 game files locally with 'horizon-prepare'\"\n  echo \"[Horizon] and upload them to resources/ via SFTP (see https://playhorizon.dev/docs/hosting).\"\n  exit 1\nfi\n\nif [ ! -f server.toml ]; then\n  if [ \"${HORIZON_EULA:-false}\" != \"true\" ]; then\n    echo \"[Horizon] The Minecraft EULA (https://aka.ms/MinecraftEULA) has not been accepted.\"\n    echo \"[Horizon] Set the 'Accept the Minecraft EULA' variable to true on the Startup tab.\"\n    exit 1\n  fi\n  set -- init --yes --eula --port \"$PORT\"\n  [ -n \"${HORIZON_WORLD:-}\" ] && set -- \"$@\" --world \"$HORIZON_WORLD\"\n  [ -n \"${HORIZON_SEED:-}\" ]  && set -- \"$@\" --seed \"$HORIZON_SEED\"\n  if [ \"${HORIZON_WHITELIST:-true}\" = \"true\" ]; then set -- \"$@\" --whitelist; else set -- \"$@\" --no-whitelist; fi\n  [ -n \"${HORIZON_OP:-}\" ] && set -- \"$@\" --op \"$HORIZON_OP\"\n  [ \"${HORIZON_ONLINE:-true}\" = \"false\" ] && set -- \"$@\" --offline\n  # HORIZON_PLAYERS (comma-separated) is read by init straight from the environment.\n  echo \"[Horizon] First start: creating server.toml...\"\n  \"$BIN\" \"$@\" || exit 1\nfi\n\n# Always follow the panel allocation (only the [server] line starts with \"port =\").\nsed -i \"s/^port = .*/port = ${PORT}/\" server.toml\n\nexec \"$BIN\" run\nSTART\nchmod +x \"$DIR/horizon-start.sh\"\n\necho \"[Horizon] Installed: $TAG\"\necho \"[Horizon] Next: upload the prepared 26.3 game files to resources/,\"\necho \"[Horizon] set the EULA variable to true and start the server.\"\n",
+            "container": "ghcr.io/ptero-eggs/installers:debian",
+            "entrypoint": "bash"
+        }
+    },
+    "variables": [
+        {
+            "name": "Accept the Minecraft EULA",
+            "description": "true accepts the Minecraft EULA (https://aka.ms/MinecraftEULA). The server won't start until it is true.",
+            "env_variable": "HORIZON_EULA",
+            "default_value": "false",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Horizon release",
+            "description": "GitHub release tag: nightly or an exact tag such as v1.2.3. Read on install/reinstall only.",
+            "env_variable": "HORIZON_VERSION",
+            "default_value": "nightly",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:64",
+            "field_type": "text"
+        },
+        {
+            "name": "World name",
+            "description": "The world's folder name. First start only.",
+            "env_variable": "HORIZON_WORLD",
+            "default_value": "world",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:64",
+            "field_type": "text"
+        },
+        {
+            "name": "World seed",
+            "description": "The world seed; empty picks a random one. First start only.",
+            "env_variable": "HORIZON_SEED",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:64",
+            "field_type": "text"
+        },
+        {
+            "name": "Whitelist",
+            "description": "true turns the whitelist on. First start only (later: whitelist on/off in the console).",
+            "env_variable": "HORIZON_WHITELIST",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Whitelisted players",
+            "description": "Player names, comma-separated. First start only.",
+            "env_variable": "HORIZON_PLAYERS",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:512",
+            "field_type": "text"
+        },
+        {
+            "name": "Operator",
+            "description": "A player name to make operator. First start only.",
+            "env_variable": "HORIZON_OP",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|max:32",
+            "field_type": "text"
+        },
+        {
+            "name": "Online mode",
+            "description": "true checks accounts with Mojang. false lets anyone join under any name - only use it with the whitelist or on a private network. First start only.",
+            "env_variable": "HORIZON_ONLINE",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:true,false",
+            "field_type": "text"
+        },
+        {
+            "name": "Disable update check",
+            "description": "1 turns off Horizon's update check; empty leaves it on. To update, change the release variable and reinstall.",
+            "env_variable": "HORIZON_NO_UPDATE_CHECK",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "nullable|string|in:1",
+            "field_type": "text"
+        }
+    ]
+}
