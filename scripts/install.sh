@@ -152,20 +152,24 @@ prepare_game_files() {
     || die "some of Mojang's files don't match their SHA-1"
 
   # --- horizon-prepare ----------------------------------------------------------------------
-  local OUT="$TMP/prepared"
+  local OUT="$TMP/prepared" HELP
   mkdir -p "$OUT"
+  # Older releases (e.g. v0.2.x) know neither --java-home nor --output: they find Java through
+  # JAVA_HOME/PATH and always write to <root>/.local/horizon-client/<version>. Pass only what this one knows.
+  HELP=$("$H/horizon-prepare" --help 2>&1 || true)
+  set -- --prepare --minecraft-dir "$MC" --server-jar "$MC/server.jar"
+  printf '%s' "$HELP" | grep -q -- '--java-home' && set -- "$@" --java-home "$TMP/jdk"
+  printf '%s' "$HELP" | grep -q -- '--output' && set -- "$@" --output "$OUT"
+  rm -rf "$H/.local"
   log "Preparing the game files with horizon-prepare (usually under a minute; needs about 3 GB of RAM)..."
   HOME="$TMP/home" JAVA_HOME="$TMP/jdk" PATH="$TMP/jdk/bin:$PATH" HORIZON_NO_UPDATE_CHECK=1 \
-    "$H/horizon-prepare" --prepare \
-      --minecraft-dir "$MC" \
-      --server-jar "$MC/server.jar" \
-      --java-home "$TMP/jdk" \
-      --output "$OUT" \
-    || die "horizon-prepare failed (see above). Too little RAM? It needs about 3 GB."
+    "$H/horizon-prepare" "$@" \
+    || die "horizon-prepare failed (see its output above). If it ran out of memory, give the server about 4 GB of RAM and reinstall."
 
-  # The prepared folder is the one holding registries.json (horizon-client/26.3 or the output itself).
+  # The prepared folder is the one holding registries.json: the --output folder itself on newer releases,
+  # <root>/.local/horizon-client/<version> on older ones.
   local SRC
-  SRC=$(find "$OUT" -name registries.json -printf '%h\n' 2>/dev/null | head -n1)
+  SRC=$( { find "$OUT" "$H/.local/horizon-client" -name registries.json -printf '%h\n' 2>/dev/null || true; } | head -n1)
   [ -n "$SRC" ] || die "horizon-prepare finished, but no prepared folder (with registries.json) was found in its output"
   log "Moving the prepared files into resources/..."
   rm -rf "$DIR/resources"
