@@ -10,7 +10,7 @@ Based on the official hosting guide at <https://playhorizon.dev/docs/hosting> an
 2. In the panel, go to **Admin → Nests → Import Egg** and import the file.
 3. Create a server with the egg. Install it on an **x86-64 Linux** node. Horizon publishes its server build only for this platform.
 
-**Disk space:** Give the server at least **1 GB** of disk. The install alone needs about 300 MB: Horizon takes about 200 MB unpacked, plus the download. The game files and the world come on top of that.
+**Disk space:** Give the server at least **1 GB** of disk. The install needs about 260 MB free: Horizon takes about 210 MB unpacked. The download goes straight into the unpacker and is never stored. The game files and the world come on top of that.
 
 ## Before the first start
 
@@ -53,6 +53,7 @@ The first start runs `horizon-server init`, which writes `server.toml` from thes
 ## Troubleshooting
 
 - **`No space left on device` during install** and then **`cannot open ./horizon-start.sh`**: the server's disk limit is too small for the install. Raise it to 1 GB or more and reinstall.
+- **The install log doesn't show any `[Horizon]` lines:** the panel is still running an older install script. Import the current `egg-horizon.json` over the existing egg, then reinstall.
 
 ## Updating
 

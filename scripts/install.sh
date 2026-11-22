@@ -4,6 +4,7 @@
 # and writes horizon-start.sh. The world, server.toml and resources/ are kept on reinstall.
 # Set HORIZON_INSTALL_DIR to install somewhere else (e.g. for a local dry run).
 set -eu
+set -o pipefail
 DIR="${HORIZON_INSTALL_DIR:-/mnt/server}"
 REPO=horizon-rust/horizon
 ASSET=horizon-server-linux-x86_64.tar.gz
@@ -18,7 +19,7 @@ fi
 mkdir -p "$DIR"
 cd "$DIR"
 # Stage inside the server folder: the installer container's /tmp is a small tmpfs
-# (about 100 MB by default on Wings), too small for the ~76 MB archive plus ~200 MB unpacked.
+# (about 100 MB by default on Wings), too small for the ~200 MB unpacked release.
 TMP="$DIR/.horizon-install"
 rm -rf "$TMP"
 mkdir -p "$TMP"
@@ -31,25 +32,37 @@ URL=$(printf '%s' "$JSON" | jq -r --arg a "$ASSET" '.assets[] | select(.name==$a
 DIGEST=$(printf '%s' "$JSON" | jq -r --arg a "$ASSET" '.assets[] | select(.name==$a) | .digest // empty' | sed 's/^sha256://')
 [ -n "$URL" ] && [ "$URL" != null ] || die "release '$TAG' has no $ASSET"
 
-echo "[Horizon] Downloading $ASSET..."
-curl -fL --progress-bar -o "$TMP/$ASSET" "$URL"
+# Stream the download straight into tar (the archive is never stored), hashing it on the way.
+# Peak disk use is the unpacked size (~210 MB) instead of archive + unpacked.
+# Remove the previous program first so a reinstall doesn't need room for two copies.
+# (Only ./horizon/ is touched; worlds, server.toml and resources/ stay.)
+rm -rf "$DIR/horizon"
+
+NEED_KB=$((260 * 1024))
+FREE_KB=$(df -Pk "$DIR" 2>/dev/null | awk 'NR==2 {print $4}')
+if [ -n "$FREE_KB" ] && [ "$FREE_KB" -lt "$NEED_KB" ]; then
+  die "only $((FREE_KB / 1024)) MB free in the server folder, about 260 MB needed: raise the server's disk limit (1 GB or more) and reinstall"
+fi
+
+mkdir -p "$TMP/x"
+mkfifo "$TMP/hash.fifo"
+sha256sum < "$TMP/hash.fifo" | cut -d' ' -f1 > "$TMP/hash.txt" &
+HASH_PID=$!
+echo "[Horizon] Downloading and unpacking $ASSET (about 210 MB unpacked)..."
+if ! curl -fL --progress-bar "$URL" | tee "$TMP/hash.fifo" | tar -xzf - -C "$TMP/x" --strip-components=1; then
+  wait "$HASH_PID" 2>/dev/null || true
+  die "download or unpacking failed - out of disk space? Raise the server's disk limit (1 GB or more) and reinstall"
+fi
+wait "$HASH_PID"
+GOT=$(cat "$TMP/hash.txt")
 if [ -n "$DIGEST" ]; then
-  GOT=$(sha256sum "$TMP/$ASSET" | cut -d' ' -f1)
-  [ "$GOT" = "$DIGEST" ] || die "SHA-256 mismatch (got $GOT, expected $DIGEST)"
+  [ "$GOT" = "$DIGEST" ] || die "SHA-256 mismatch (got $GOT, expected $DIGEST): not installed"
   echo "[Horizon] SHA-256 OK."
 else
   echo "[Horizon] Warning: the release publishes no SHA-256, skipping verification."
 fi
-
-mkdir -p "$TMP/x"
-echo "[Horizon] Unpacking (needs about 300 MB of free disk space)..."
-tar -xzf "$TMP/$ASSET" -C "$TMP/x" --strip-components=1 \
-  || die "unpacking failed - is the server's disk limit big enough? (about 300 MB needed during install)"
-rm -f "$TMP/$ASSET"
 [ -x "$TMP/x/horizon-server" ] || die "$ASSET contains no horizon-server"
 
-# Replace only the program, keep the server's own data.
-rm -rf "$DIR/horizon"
 mv "$TMP/x" "$DIR/horizon"
 mkdir -p "$DIR/resources"
 printf '%s\n' "$TAG" > "$DIR/horizon/.installed-tag"
