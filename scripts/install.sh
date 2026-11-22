@@ -17,7 +17,11 @@ fi
 
 mkdir -p "$DIR"
 cd "$DIR"
-TMP=$(mktemp -d)
+# Stage inside the server folder: the installer container's /tmp is a small tmpfs
+# (about 100 MB by default on Wings), too small for the ~76 MB archive plus ~200 MB unpacked.
+TMP="$DIR/.horizon-install"
+rm -rf "$TMP"
+mkdir -p "$TMP"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "[Horizon] Looking up release '$TAG' on GitHub..."
@@ -38,7 +42,10 @@ else
 fi
 
 mkdir -p "$TMP/x"
-tar -xzf "$TMP/$ASSET" -C "$TMP/x" --strip-components=1
+echo "[Horizon] Unpacking (needs about 300 MB of free disk space)..."
+tar -xzf "$TMP/$ASSET" -C "$TMP/x" --strip-components=1 \
+  || die "unpacking failed - is the server's disk limit big enough? (about 300 MB needed during install)"
+rm -f "$TMP/$ASSET"
 [ -x "$TMP/x/horizon-server" ] || die "$ASSET contains no horizon-server"
 
 # Replace only the program, keep the server's own data.
