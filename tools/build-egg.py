@@ -20,8 +20,8 @@ egg = {
     "name": "Horizon",
     "author": "wildesPepega@users.noreply.github.com",
     "description": "Horizon - a Minecraft Java Edition 26.3 server written in Rust (horizon-server): one native "
-                   "program, no Java. The game files must be prepared from your own copy of Minecraft with "
-                   "horizon-prepare and uploaded to resources/ (https://playhorizon.dev/docs/hosting).",
+                   "program, no Java at runtime. The install prepares the game files automatically from "
+                   "Mojang's official downloads (https://playhorizon.dev/docs/hosting).",
     "features": [],
     "docker_images": {"Debian": "ghcr.io/ptero-eggs/yolks:debian"},
     "file_denylist": [],
@@ -44,6 +44,12 @@ egg = {
         var("Horizon release",
             "GitHub release tag: nightly or an exact tag such as v1.2.3. Read on install/reinstall only.",
             "HORIZON_VERSION", "nightly", "required|string|max:64"),
+        var("Prepare game files",
+            "auto prepares the Minecraft game files during install when resources/ has none: it downloads "
+            "the pinned client, server, libraries and assets from Mojang plus a Java JDK (Eclipse Temurin), "
+            "runs horizon-prepare and deletes the downloads again (needs about 2 GB of free disk and 3 GB of "
+            "RAM during install). always redoes it on every reinstall. off: upload them to resources/ yourself.",
+            "HORIZON_PREPARE", "auto", "required|string|in:auto,always,off"),
         var("World name", "The world's folder name. First start only.",
             "HORIZON_WORLD", "world", "nullable|string|max:64"),
         var("World seed", "The world seed; empty picks a random one. First start only.",
